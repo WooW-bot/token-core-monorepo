@@ -149,6 +149,7 @@ impl PrivateKeystore {
             identity,
             curve: Some(curve),
             enc_original: enc_original,
+            accounts: vec![], // 添加空账户列表
         };
 
         Ok(PrivateKeystore {

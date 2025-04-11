@@ -22,6 +22,7 @@ tcx-eth2 = { path = "../tcx-eth2" }
 tcx-eth = { path = "../tcx-eth" }
 tcx-common = { path = "../tcx-common" }
 tcx-migration = { path = "../tcx-migration" }
+tcx-sui = { path = "../tcx-sui" }
 tcx-ton = { path = "../tcx-ton" }
 #zksync-crypto = { git="https://github.com/consenlabs/zksync", branch="hotfix/compatible_with_tcx" }
 
@@ -31,6 +32,7 @@ prost-types = "=0.11.2"
 
 libc = "=0.2.140"
 log = "=0.4.17"
+android_logger = { version = "0.13", optional = true }
 serde_json = "=1.0.89"
 serde = { version = "=1.0.147", features = ["derive"] }
 anyhow = { version = "=1.0.79", features = [] }
@@ -53,3 +55,7 @@ prost-build = "=0.11.4"
 serial_test = "=2.0.0"
 sp-core = "=7.0.0"
 sp-runtime = "=7.0.0"
+
+[features]
+default = []
+android = ["android_logger"]

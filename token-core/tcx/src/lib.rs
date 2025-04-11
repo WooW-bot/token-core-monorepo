@@ -7,8 +7,12 @@ use std::os::raw::c_char;
 
 use anyhow::anyhow;
 use handler::{backup, sign_bls_to_execution_change};
+use log::{debug, error, info, LevelFilter};
 use migration::{mark_identity_wallets, read_legacy_keystore_mnemonic_path};
 use prost::Message;
+
+#[cfg(feature = "android")]
+use android_logger::{Config, FilterBuilder};
 
 pub mod api;
 
@@ -50,6 +54,24 @@ lazy_static! {
 
 pub type Result<T> = result::Result<T, Error>;
 
+#[no_mangle]
+pub unsafe extern "C" fn init_logger() {
+    #[cfg(feature = "android")]
+    {
+        let config = Config::default()
+            .with_tag("tcx")
+            .with_max_level(LevelFilter::Debug);
+        android_logger::init_once(config);
+        debug!("Android日志系统初始化完成");
+    }
+
+    #[cfg(not(feature = "android"))]
+    {
+        log::set_max_level(LevelFilter::Debug);
+        debug!("标准日志系统初始化完成");
+    }
+}
+
 /// # Safety
 ///
 #[no_mangle]
@@ -66,21 +88,51 @@ pub unsafe extern "C" fn free_const_string(s: *const c_char) {
 #[allow(deprecated)]
 #[no_mangle]
 pub unsafe extern "C" fn call_tcx_api(hex_str: *const c_char) -> *const c_char {
-    let hex_c_str = CStr::from_ptr(hex_str);
-    let hex_str = hex_c_str.to_str().expect("parse_arguments to_str");
+    debug!("开始处理API调用");
+    if hex_str.is_null() {
+        error!("API调用参数为空");
+        return CString::new("").unwrap().into_raw();
+    }
 
-    let data = Vec::from_hex(hex_str).expect("parse_arguments hex decode");
-    let action: TcxAction = TcxAction::decode(data.as_slice()).expect("decode tcx api");
+    let hex_c_str = match CStr::from_ptr(hex_str).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            error!("解析API参数失败: {}", e);
+            return CString::new("").unwrap().into_raw();
+        }
+    };
+
+    let data = match Vec::from_hex(hex_c_str) {
+        Ok(d) => d,
+        Err(e) => {
+            error!("解码十六进制数据失败: {}", e);
+            return CString::new("").unwrap().into_raw();
+        }
+    };
+
+    let action: TcxAction = match TcxAction::decode(data.as_slice()) {
+        Ok(a) => a,
+        Err(e) => {
+            error!("解码API消息失败: {}", e);
+            return CString::new("").unwrap().into_raw();
+        }
+    };
+
+    debug!("API方法: {}", action.method);
+
     let reply: Result<Vec<u8>> = match action.method.to_lowercase().as_str() {
         "init_token_core_x" => landingpad(|| {
+            debug!("初始化TokenCore");
             handler::init_token_core_x(&action.param.unwrap().value).unwrap();
             Ok(vec![])
         }),
         "scan_legacy_keystores" => landingpad(|| {
+            debug!("扫描旧版钱包");
             let ret = scan_legacy_keystores()?;
             encode_message(ret)
         }),
         "scan_keystores" => landingpad(|| {
+            debug!("扫描钱包");
             let ret = scan_keystores()?;
             encode_message(ret)
         }),
@@ -98,7 +150,15 @@ pub unsafe extern "C" fn call_tcx_api(hex_str: *const c_char) -> *const c_char {
         "exists_mnemonic" => landingpad(|| exists_mnemonic(&action.param.unwrap().value)),
         "exists_private_key" => landingpad(|| exists_private_key(&action.param.unwrap().value)),
         "derive_sub_accounts" => landingpad(|| derive_sub_accounts(&action.param.unwrap().value)),
-        "sign_tx" => landingpad(|| sign_tx(&action.param.unwrap().value)),
+        "sign_tx" => landingpad(|| {
+            debug!("开始交易签名");
+            let result = sign_tx(&action.param.unwrap().value);
+            match &result {
+                Ok(_) => debug!("交易签名成功"),
+                Err(e) => error!("交易签名失败: {:?}", e),
+            }
+            result
+        }),
         "sign_msg" => landingpad(|| sign_message(&action.param.unwrap().value)),
         "exists_json" => landingpad(|| exists_json(&action.param.unwrap().value)),
         "import_json" => landingpad(|| import_json(&action.param.unwrap().value)),
@@ -136,14 +196,22 @@ pub unsafe extern "C" fn call_tcx_api(hex_str: *const c_char) -> *const c_char {
         }
         "sign_psbt" => landingpad(|| sign_psbt(&action.param.unwrap().value)),
         "sign_psbts" => landingpad(|| sign_psbts(&action.param.unwrap().value)),
-        _ => landingpad(|| Err(anyhow!("unsupported_method"))),
+        _ => {
+            error!("不支持的方法: {}", action.method);
+            landingpad(|| Err(anyhow!("unsupported_method")))
+        }
     };
+
     match reply {
         Ok(reply) => {
+            debug!("API调用成功");
             let ret_str = reply.to_hex();
             CString::new(ret_str).unwrap().into_raw()
         }
-        _ => CString::new("").unwrap().into_raw(),
+        Err(e) => {
+            error!("API调用失败: {:?}", e);
+            CString::new("").unwrap().into_raw()
+        }
     }
 }
 

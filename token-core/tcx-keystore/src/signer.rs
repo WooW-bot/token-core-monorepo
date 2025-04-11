@@ -59,4 +59,6 @@ pub trait Signer {
     fn sr25519_sign(&mut self, hash: &[u8], derivation_path: &str) -> Result<Vec<u8>>;
 
     fn ed25519_sign(&mut self, hash: &[u8], derivation_path: &str) -> Result<Vec<u8>>;
+
+    fn sui_sign(&mut self, hash: &[u8], derivation_path: &str) -> Result<Vec<u8>>;
 }

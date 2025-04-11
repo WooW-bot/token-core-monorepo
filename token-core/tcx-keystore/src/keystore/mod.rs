@@ -23,6 +23,7 @@ use tcx_crypto::{Crypto, EncPair, Key};
 use tcx_primitive::{Derive, TypedDeterministicPublicKey, TypedPrivateKey, TypedPublicKey};
 
 use anyhow::anyhow;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,8 @@ pub struct Store {
     pub enc_original: EncPair,
     #[serde(rename = "imTokenMeta")]
     pub meta: Metadata,
+    #[serde(default)]
+    pub accounts: Vec<AccountData>,
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -60,6 +63,8 @@ pub enum Error {
     InvalidVersion,
     #[error("pkstore_can_not_add_other_curve_account")]
     PkstoreCannotAddOtherCurveAccount,
+    #[error("invalid sui curve type")]
+    InvalidSuiCurveType,
 }
 
 fn transform_mnemonic_error(err: anyhow::Error) -> Error {
@@ -172,6 +177,20 @@ impl fmt::Display for IdentityNetwork {
             IdentityNetwork::Testnet => write!(f, "TESTNET"),
         }
     }
+}
+
+/// 新添加的派生账户信息
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountData {
+    pub chain_type: String,
+    pub address: String,
+    pub path: String,
+    pub curve: String,
+    pub public_key: String,
+    pub extended_public_key: String,
+    pub encrypted_extended_public_key: String,
+    pub seg_wit: String,
 }
 
 /// Metadata of fixtures, for presenting wallet data
@@ -334,6 +353,10 @@ impl Keystore {
             Keystore::PrivateKey(ks) => ks.derive_coin::<A>(coin_info),
             Keystore::Hd(ks) => ks.derive_coin::<A>(coin_info),
         }
+    }
+
+    pub fn accounts(&self) -> Vec<AccountData> {
+        self.store().accounts.clone()
     }
 
     pub fn derive_coins<A: Address>(&mut self, coin_infos: &[CoinInfo]) -> Result<Vec<Account>> {
@@ -514,6 +537,45 @@ impl Signer for Keystore {
         };
 
         private_key.as_ed25519()?.sign(hash)
+    }
+
+    fn sui_sign(&mut self, hash: &[u8], derivation_path: &str) -> Result<Vec<u8>> {
+        let private_key = match self {
+            Keystore::PrivateKey(ks) => ks.get_private_key(CurveType::ED25519)?,
+            Keystore::Hd(ks) => ks.get_private_key(CurveType::ED25519, derivation_path)?,
+        };
+
+        const ED25519_FLAG: u8 = 0x00;
+        const SECP256K1_FLAG: u8 = 0x01;
+
+        let mut full_signature = Vec::new();
+
+        match private_key {
+            TypedPrivateKey::Ed25519(_) => {
+                // 1. 签名
+                let mut sig = private_key.as_ed25519()?.sign(hash)?;
+                // 2. 添加 flag
+                full_signature.push(ED25519_FLAG);
+                // 3. 添加签名
+                full_signature.append(&mut sig);
+            }
+            TypedPrivateKey::Secp256k1(_) => {
+                // 对数据进行 SHA256 哈希
+                let mut hasher = Sha256::new();
+                hasher.update(hash);
+                let hashed = hasher.finalize();
+
+                let sig = private_key.as_secp256k1()?.sign_recoverable(hash)?;
+                full_signature.push(SECP256K1_FLAG);
+                full_signature.append(&mut sig[..64].to_vec());
+            }
+            _ => return Err(Error::InvalidSuiCurveType.into()),
+        };
+
+        // 添加公钥
+        full_signature.append(&mut private_key.public_key().to_bytes());
+
+        Ok(full_signature)
     }
 }
 

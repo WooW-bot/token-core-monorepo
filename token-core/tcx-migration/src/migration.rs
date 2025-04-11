@@ -226,6 +226,7 @@ impl LegacyKeystore {
             meta,
             curve: None,
             enc_original,
+            accounts: vec![],
         };
 
         let derived_key = unlocker.derived_key();
@@ -304,6 +305,7 @@ impl LegacyKeystore {
             identity,
             curve: Some(curve),
             enc_original,
+            accounts: vec![],
         };
 
         let unlocker = self.crypto.use_key(key)?;

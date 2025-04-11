@@ -183,6 +183,7 @@ impl HdKeystore {
                 identity,
                 curve: None,
                 enc_original,
+                accounts: vec![], // 添加空账户列表
             },
 
             cache: None,

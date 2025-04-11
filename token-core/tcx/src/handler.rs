@@ -21,7 +21,7 @@ use tcx_keystore::{
     fingerprint_from_mnemonic, fingerprint_from_private_key, identity, Keystore, KeystoreGuard,
     SignatureParameters, Signer,
 };
-use tcx_keystore::{Account, HdKeystore, Metadata, PrivateKeystore, Source};
+use tcx_keystore::{Account, AccountData, HdKeystore, Metadata, PrivateKeystore, Source};
 
 use anyhow::{anyhow, ensure};
 use tcx_crypto::{XPUB_COMMON_IV, XPUB_COMMON_KEY_128};
@@ -91,6 +91,7 @@ use_chains!(
     tcx_substrate::polkadot,
     tcx_tezos::tezos,
     tcx_tron::tron,
+    tcx_sui::sui,
     tcx_ton::ton,
 );
 
@@ -560,6 +561,20 @@ pub fn scan_keystores() -> Result<ScannedKeystoresResult> {
                     identified_network: keystore.meta().network.to_string(),
                     identified_curve: curve_type,
                     source_fingerprint: keystore.fingerprint().to_string(),
+                    accounts: keystore
+                        .accounts()
+                        .into_iter()
+                        .map(|account| AccountResponse {
+                            chain_type: account.chain_type,
+                            address: account.address,
+                            path: account.path,
+                            curve: account.curve,
+                            public_key: account.public_key,
+                            extended_public_key: account.extended_public_key,
+                            encrypted_extended_public_key: account.encrypted_extended_public_key,
+                            seg_wit: account.seg_wit,
+                        })
+                        .collect(), // 使用新的 accounts 方法
                     ..Default::default()
                 };
                 keystores.push(scanned_keystore);
@@ -846,6 +861,31 @@ pub fn derive_accounts(data: &[u8]) -> Result<Vec<u8>> {
         };
         account_responses.push(account_rsp);
     }
+
+    // 将 AccountResponse 转换为 AccountData 并添加到 Store 中
+    let account_datas: Vec<AccountData> = account_responses
+        .iter()
+        .map(|account| AccountData {
+            chain_type: account.chain_type.clone(),
+            address: account.address.clone(),
+            path: account.path.clone(),
+            curve: account.curve.clone(),
+            public_key: account.public_key.clone(),
+            extended_public_key: account.extended_public_key.clone(),
+            encrypted_extended_public_key: account.encrypted_extended_public_key.clone(),
+            seg_wit: account.seg_wit.clone(),
+        })
+        .collect();
+
+    // 在 guard 的作用域内更新 accounts
+    guard
+        .keystore_mut()
+        .store_mut()
+        .accounts
+        .extend(account_datas);
+
+    // 将更新后的 keystore 保存到本地文件
+    flush_keystore(guard.keystore())?;
 
     let accounts_rsp = DeriveAccountsResult {
         accounts: account_responses,
